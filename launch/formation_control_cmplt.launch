@@ -1,0 +1,56 @@
+<launch>
+    <!-- Defining arguments for the mur launch --> 
+    <arg name="leader_pose_topic" default='/virtual_leader/leader_pose'/>
+    <arg name="leader_velocity_topic" default='/virtual_leader/leader_vel'/>
+    <!-- <arg name="actual_pose_topic" default='/mur620a/mir_pose_stamped_simple'/>
+    <arg name="follower_cmd_vel_topic" default='/mur620a/cmd_vel'/> -->
+    <arg name="actual_pose_topic" default='mir_pose_stamped_simple'/>
+    <arg name="follower_cmd_vel_topic" default='cmd_vel'/>
+    <arg name="relative_position_1" default="[0.0, 0.0, 0.0]"/>
+    <arg name="relative_position_2" default="[0.0, 2.0, 0.0]"/>
+    <arg name="tf_prefix1" default="mur620a"/>
+    <arg name="tf_prefix2" default="mur620d"/>
+    <arg name="drive_backwards" default="false"/>
+   
+    
+    <include file="$(find virtual_leader)/launch/virtual_leader.launch" />
+    
+    <group ns="$(arg tf_prefix1)">
+
+        <include file="$(find virtual_leader)/launch/set_leader_pose.launch">
+            <arg name="relative_pose" value="$(arg relative_position_1)"/>
+            <arg name="robot_pose_topic" value="/$(arg tf_prefix1)/$(arg actual_pose_topic)"/>
+        </include> 
+
+        <include file="$(find formation_controller)/launch/decentralized_leader_follower_control.launch">
+            <arg name="leader_pose_topic" value="$(arg leader_pose_topic)"/>
+            <arg name="leader_velocity_topic" value="$(arg leader_velocity_topic)"/>
+            <arg name="actual_pose_topic" value="/$(arg tf_prefix1)/$(arg actual_pose_topic)"/>
+            <arg name="follower_cmd_vel_topic" value="/$(arg tf_prefix1)/$(arg follower_cmd_vel_topic)"/>
+            <arg name="relative_position" value="$(arg relative_position_1)"/>
+            <arg name="tf_prefix" value="$(arg tf_prefix1)"/>
+            <arg name="drive_backwards" value="$(arg drive_backwards)"/>
+        </include> 
+
+    </group>
+
+    <group ns="$(arg tf_prefix2)">
+        <include file="$(find virtual_leader)/launch/set_leader_pose.launch">
+            <arg name="relative_pose" value="$(arg relative_position_2)"/>
+            <arg name="robot_pose_topic" value="/$(arg tf_prefix2)/$(arg actual_pose_topic)"/>
+        </include> 
+
+        <include file="$(find formation_controller)/launch/decentralized_leader_follower_control.launch">
+            <arg name="leader_pose_topic" value="$(arg leader_pose_topic)"/>
+            <arg name="leader_velocity_topic" value="$(arg leader_velocity_topic)"/>
+            <arg name="actual_pose_topic" value="/$(arg tf_prefix2)/$(arg actual_pose_topic)"/>
+            <arg name="follower_cmd_vel_topic" value="/$(arg tf_prefix2)/$(arg follower_cmd_vel_topic)"/>
+            <arg name="relative_position" value="$(arg relative_position_2)"/>
+            <arg name="tf_prefix" value="$(arg tf_prefix2)"/>
+            <arg name="drive_backwards" value="$(arg drive_backwards)"/>
+        </include> 
+
+    </group>
+
+
+</launch>

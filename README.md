@@ -54,6 +54,7 @@ roslaunch formation_controller decentralized_leader_follower_control.launch
 ```
 
 ### Lissajous figure
+For this this package has to be cloned into ws: https://github.com/matchRos/diss_Evaluation.git
 ```bash
 rosrun dezentralized_controller_tuning lissajous_response_pub.py
 ```
