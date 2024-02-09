@@ -3,27 +3,48 @@ import numpy as np
 import rospy
 import rosbag
 from geometry_msgs.msg import PoseStamped
+import tf
 from typing import List
+
+from find_transformation_mocap import TransformationCalc
 
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 
-# bag_path='bags/2024-01-22-15-59-08_compare_test_no_movement.bag'
-bag_path='bags/2024-01-22-16-01-55_compare_test_movement.bag'
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_one.bag'
+bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.052_one.bag'
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_two.bag'
+bag_path_transformation='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
 
-pose_mocap_topic='/qualisys_map/mur620a/pose'
-pose_amcl_topic='/mur620a/mir_pose_stamped_simple'
+pose_mocap_topic='/qualisys/mur620c/pose'
+# pose_amcl_topic='/mur620c/mir_pose_stamped_simple'
+pose_amcl_topic='/mur620c/robot_pose'
+
+# Get fixed transformation from mocap to amcl
+tC = TransformationCalc(bag_path_transformation, pose_mocap_topic, pose_amcl_topic)
+tC.calculate_transformation()
 
 # Initialize data structures
-data1 = {'timestamp': [], 'x': [], 'y': [], 'rot_z': []}
-data2 = {'timestamp': [], 'x': [], 'y': [], 'rot_z': []}
+data1 = {'timestamp': [], 'x': [], 'y': [], 'z': [], 'rot_z': []}
+data2 = {'timestamp': [], 'x': [], 'y': [], 'z': [], 'rot_z': []}
 
-# Function to process PoseStamped messages
-def process_message(msg, data):
-    data['timestamp'].append(msg.header.stamp.to_sec())
-    data['x'].append(msg.pose.position.x)
-    data['y'].append(msg.pose.position.y)
-    data['rot_z'].append(msg.pose.orientation.z) #TODO: This is not the correct way to get the rotation
+# Function to process PoseStamped or Pose messages
+def process_message(msg, data, t):
+    try:
+        data['timestamp'].append(msg.header.stamp.to_sec())
+        pose = msg.pose
+    except AttributeError:
+        # get time from clock if pose not poseStamped
+        data['timestamp'].append(t.to_sec())
+        pose=msg
+        
+    data['x'].append(pose.position.x)
+    data['y'].append(pose.position.y)
+    data['z'].append(pose.position.z)
+    rot_z = tf.transformations.euler_from_quaternion([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])[2]
+    data['rot_z'].append(rot_z)
     
 def plot_data(data: List[pd.DataFrame], labels: List[str]):
     fig, axs = plt.subplots(3, 1, sharex=True)
@@ -49,17 +70,16 @@ def create_line_collection(df: pd.DataFrame, cmap='viridis'):
     lc.set_array(df.index)
     # Set the colormap based on the timestamp values
     # lc.set_array(df.index.to_series().diff().dropna().values)
-    return lc
-
+    return lc  
     
 with rosbag.Bag(bag_path) as bag:
     for topic, msg, t in bag.read_messages(topics=[pose_amcl_topic]):
         # if isinstance(msg, PoseStamped):
-        process_message(msg, data1)
+        process_message(msg, data1, t)
             
     for topic, msg, t in bag.read_messages(topics=[pose_mocap_topic]):
         # if isinstance(msg, PoseStamped):
-        process_message(msg, data2)
+        process_message(msg, data2, t)
 
 # Subtract the first timestamp from all timestamps
 data1['timestamp'] = [t - data1['timestamp'][0] for t in data1['timestamp']]
@@ -77,6 +97,8 @@ df2_aligned = df2.reindex(df1.index, method='nearest')
 print(f'Frequency AMCL: {1/df1.index.to_series().diff().mode()[0]}')
 print(f'Frequency MoCap: {1/df2.index.to_series().diff().mode()[0]}')
 print(f'Frequency aligned: {1/df2_aligned.index.to_series().diff().mode()[0]}')
+
+df1 = tC.apply_transformation(df1)
 
 # Subtract df1 from df2
 error = df2_aligned - df1
@@ -107,7 +129,7 @@ plt.ylabel('y')
 # plt.show()
 
 
-
+# Use lines for the xy plot with color based on time
 lc_df1 = create_line_collection(df1, 'winter') #Blues
 lc_df2 = create_line_collection(df2_corrected, cmap='copper') #Reds
 
@@ -121,6 +143,8 @@ ax.set_ylabel('Y')
 plt.colorbar(lc_df1, label='Time AMCL')
 plt.colorbar(lc_df2, label='Time MoCap')
 plt.show()
+
+fig.savefig(bag_path+'.png')
 
 # Get all meaningful statistics from the error:
 print('Mean')
