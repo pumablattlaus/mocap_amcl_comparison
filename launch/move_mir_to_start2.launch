@@ -1,0 +1,18 @@
+<launch>
+
+    <!-- Defining arguments for the mur launch -->
+    <!-- mur1, map:240116 -->
+    <!-- <arg name="target_pose" default='[34.01,63.94,0.0]'/>  -->
+
+    <!-- mur1, map:240116_added_features -->
+    <!-- <arg name="target_pose" default='[34.08,38.97,0.0]'/> -->
+    <!-- mur2, map:Scale_4.12.23 -->
+    <arg name="target_pose" default='[33.97,40.77,0.0]'/>
+
+    <arg name="tf_prefix" default="mur620d"/>
+
+    <node name="move_mir_to_start_pose" pkg="mocap_amcl_comparison" type="move_mir_to_start_pose.py" output="screen">
+        <rosparam param="target_pose" subst_value="True">$(arg target_pose) </rosparam>
+        <param name="tf_prefix" value="$(arg tf_prefix)"/>
+    </node>
+</launch>

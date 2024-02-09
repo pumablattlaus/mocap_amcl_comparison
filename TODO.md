@@ -8,3 +8,7 @@ For this, there are several steps to be done:
     - Use Mocap
 - Compare both by using Time Series Objects
     - show [trend](https://builtin.com/data-science/time-series-python?)?
+
+### Compare amcl to mocap
+- Rosbag
+- Evaluate in python
