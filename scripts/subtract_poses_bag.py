@@ -45,6 +45,11 @@ def process_message(msg, data, t):
     data['z'].append(pose.position.z)
     rot_z = tf.transformations.euler_from_quaternion([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])[2]
     data['rot_z'].append(rot_z)
+
+def correct_orientation(data: pd.DataFrame):
+    # Correct the rotation error to be between -pi and pi
+    data['rot_z'][abs(data['rot_z']) > np.pi] -= 2*np.pi*np.sign(data['rot_z'])
+    return data
     
 def plot_data(data: List[pd.DataFrame], labels: List[str]):
     fig, axs = plt.subplots(3, 1, sharex=True)
@@ -59,6 +64,7 @@ def plot_data(data: List[pd.DataFrame], labels: List[str]):
     axs[1].legend()
     axs[2].set_title('rot_z')
     axs[2].legend()
+    return fig
 
 def create_line_collection(df: pd.DataFrame, cmap='viridis'):
     # Create a LineCollection with segments connecting the points
@@ -99,6 +105,8 @@ print(f'Frequency MoCap: {1/df2.index.to_series().diff().mode()[0]}')
 print(f'Frequency aligned: {1/df2_aligned.index.to_series().diff().mode()[0]}')
 
 df1 = tC.apply_transformation(df1)
+# df1=correct_orientation(df1)
+# df2=correct_orientation(df2)
 
 # Subtract df1 from df2
 error = df2_aligned - df1
@@ -109,14 +117,35 @@ df2_corrected = df2_aligned - error.mean()
 df1_wo_start = df1 - df1.iloc[0]
 df2_aligned_wo_start = df2_aligned - df2_aligned.iloc[0]
 
+df1_wo_start=correct_orientation(df1_wo_start)
+df2_aligned_wo_start=correct_orientation(df2_aligned_wo_start)
+
 # error_wo_start
-error_wo_start = df2_aligned - df1
+error_wo_start = df2_aligned_wo_start - df1_wo_start
+
+# disregard ouliers in rot_z:
+error_wo_start['rot_z'][abs(error_wo_start['rot_z']) > np.pi/2] = np.nan
+print(f"{error_wo_start.mean()=}")
+
+df2_wo_start_corrected = df2_aligned_wo_start - error_wo_start.mean()
+
 error_corrected = df2_corrected - df1
+error_wo_start_corrected = df2_wo_start_corrected - df1_wo_start
+# disregard ouliers in rot_z:
+error_wo_start_corrected['rot_z'][abs(error_wo_start_corrected['rot_z']) > np.pi/2] = np.nan
 
 # Plot the result and the original data. One figure for x, one for y, one for rot_z
-plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
-plot_data([error_wo_start], ['error_wo_start'])
-plot_data([error_corrected], ['error_corrected'])
+# fig=plot_data([df1, df2_aligned], ['AMCL', 'MoCap'])
+# fig=plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
+# fig=plot_data([df1, df2_corrected], ['AMCL', 'MoCap'])
+fig=plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
+fig.savefig(bag_path+'_xyrot.png')
+
+fig=plot_data([error_wo_start], ['error'])
+fig.savefig(bag_path+'_error.png')
+
+fig=plot_data([error_wo_start_corrected], ['corrected error'])
+fig.savefig(bag_path+'_error_corrected.png')
 
 # Also plot x and y in the same figure, with the time as color
 plt.figure()
