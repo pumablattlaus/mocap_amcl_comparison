@@ -9,12 +9,13 @@ from typing import List
 from find_transformation_mocap import TransformationCalc
 
 from matplotlib import pyplot as plt
+# plt.rcParams['text.usetex'] = True
 from matplotlib.collections import LineCollection
 
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_one.bag'
-bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.052_one.bag'
-# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.052_one.bag'
+bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_two.bag'
 bag_path_transformation='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
 
@@ -58,12 +59,20 @@ def plot_data(data: List[pd.DataFrame], labels: List[str]):
         axs[1].plot(df.index, df['y'], label=labels[i])
         axs[2].plot(df.index, df['rot_z'], label=labels[i])
 
-    axs[0].set_title('x')
-    axs[0].legend()
-    axs[1].set_title('y')
-    axs[1].legend()
-    axs[2].set_title('rot_z')
-    axs[2].legend()
+    # axs[0].set_title('x [m]')
+    # axs[1].set_title('y [m]')
+    # # axs[1].legend()
+    # axs[2].set_title('$\\theta$ [rad]')
+    # # axs[2].legend()
+    axs[0].set_ylabel('x [m]')
+    axs[1].set_ylabel('y [m]')
+    axs[2].set_ylabel('$\\theta$ [rad]')
+    axs[2].set_xlabel('Time [s]')
+    
+    if len(labels) > 1:
+        axs[0].legend()
+        axs[1].legend()
+        axs[2].legend()
     return fig
 
 def create_line_collection(df: pd.DataFrame, cmap='viridis'):
@@ -120,6 +129,21 @@ df2_aligned_wo_start = df2_aligned - df2_aligned.iloc[0]
 df1_wo_start=correct_orientation(df1_wo_start)
 df2_aligned_wo_start=correct_orientation(df2_aligned_wo_start)
 
+# velocities in x:
+df2_aligned_wo_start["t"] = df2_aligned_wo_start.index
+diff_df2 = df2_aligned_wo_start.diff().dropna()
+df2_aligned_wo_start["v_x"]=np.append(diff_df2["x"].values/diff_df2["t"],np.nan)
+df2_aligned_wo_start["v_y"]=np.append(diff_df2["y"].values/diff_df2["t"],np.nan)
+df2_aligned_wo_start["v_rot_z"]=np.append(diff_df2["rot_z"].values/diff_df2["t"],np.nan)
+df2_aligned_wo_start["v"] = np.append(np.linalg.norm(diff_df2[["x","y"]].values, axis=1) / diff_df2["t"], np.nan)
+
+# accelerations:
+df2_aligned_wo_start['a'] = df2_aligned_wo_start['v'].diff()
+df2_aligned_wo_start['a_x'] = df2_aligned_wo_start['v_x'].diff()
+df2_aligned_wo_start['a_y'] = df2_aligned_wo_start['v_y'].diff()
+df2_aligned_wo_start['a_rot_z'] = df2_aligned_wo_start['v_rot_z'].diff()
+
+
 # error_wo_start
 error_wo_start = df2_aligned_wo_start - df1_wo_start
 
@@ -141,21 +165,21 @@ error_wo_start_corrected['rot_z'][abs(error_wo_start_corrected['rot_z']) > np.pi
 fig=plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
 fig.savefig(bag_path+'_xyrot.png')
 
-fig=plot_data([error_wo_start], ['error'])
-fig.savefig(bag_path+'_error.png')
+# fig=plot_data([error_wo_start], ['error'])
+# fig.savefig(bag_path+'_error.png')
 
 fig=plot_data([error_wo_start_corrected], ['corrected error'])
 fig.savefig(bag_path+'_error_corrected.png')
 
 # Also plot x and y in the same figure, with the time as color
-plt.figure()
-plt.scatter(df1['x'], df1['y'], c=df1.index)
-plt.scatter(df2_corrected['x'], df2_corrected['y'], c=df2_corrected.index)
-plt.colorbar()
-plt.title('x-y plot')
-plt.xlabel('x')
-plt.ylabel('y')
-# plt.show()
+# plt.figure()
+# plt.scatter(df1['x'], df1['y'], c=df1.index)
+# plt.scatter(df2_corrected['x'], df2_corrected['y'], c=df2_corrected.index)
+# plt.colorbar()
+# plt.title('x-y plot')
+# plt.xlabel('x')
+# plt.ylabel('y')
+# # plt.show()
 
 
 # Use lines for the xy plot with color based on time
@@ -169,11 +193,45 @@ ax.add_collection(lc_df2)
 ax.autoscale()
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
-plt.colorbar(lc_df1, label='Time AMCL')
-plt.colorbar(lc_df2, label='Time MoCap')
-plt.show()
+plt.colorbar(lc_df1, label='AMCL: Duration [s]')
+plt.colorbar(lc_df2, label='MoCap: Duration [s]')
+# plt.show()
 
 fig.savefig(bag_path+'.png')
+
+# Plot velocities x and y
+fig, axs = plt.subplots(2, 1, sharex=True)
+axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_x'])
+axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_y'])
+axs[0].set_ylabel('$v_x$ [m/s]')
+axs[1].set_ylabel('$v_y$ [m/s]')
+axs[1].set_xlabel('Time [s]')
+
+# Plot velocities total
+fig, axs = plt.subplots(2, 1, sharex=True)
+axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v'])
+axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_rot_z'])
+axs[0].set_ylabel('v [m/s]')
+axs[1].set_ylabel('$v_\\theta$ [rad/s]')
+axs[1].set_xlabel('Time [s]')
+
+# Plot accelerations
+fig, axs = plt.subplots(2, 1, sharex=True)
+axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a'])
+axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_rot_z'])
+axs[0].set_ylabel('a [m/s²]')
+axs[1].set_ylabel('$a_\\theta$ [rad/s²]')
+axs[1].set_xlabel('Time [s]')
+
+fig, axs = plt.subplots(2, 1, sharex=True)
+axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_x'])
+axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_y'])
+axs[0].set_ylabel('$a_x$ [m/s²]')
+axs[1].set_ylabel('$a_y$ [m/s²]')
+axs[1].set_xlabel('Time [s]')
+
+
+plt.show()
 
 # Get all meaningful statistics from the error:
 print('Mean')
@@ -188,5 +246,24 @@ print('Max')
 print(error.max())
 print('RMS')
 print(error.pow(2).mean().pow(1/2))
+
+print('Corrected error')
+print('Mean')
+print(error_wo_start_corrected.mean())
+print('Median')
+print(error_wo_start_corrected.median())
+print('Standard deviation')
+print(error_wo_start_corrected.std())
+print('Min')
+print(error_wo_start_corrected.min())
+print('Max')
+print(error_wo_start_corrected.max())
+print('RMS')
+print(error_wo_start_corrected.pow(2).mean().pow(1/2))
+
+# output the statistics to a file:
+error_stats = pd.concat([error_wo_start_corrected.mean(), error_wo_start_corrected.median(), error_wo_start_corrected.std(), error_wo_start_corrected.min(), error_wo_start_corrected.max(), error_wo_start_corrected.pow(2).mean().pow(1/2)], axis=1)
+error_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
+error_stats.to_csv(bag_path+'_error_stats.csv')
 
 print('Done')

@@ -77,9 +77,10 @@ class TransformationCalc:
         transformed_poses = []
         for index, row in df.iterrows():
             point = row[['x', 'y', 'z']].values
-            rotated_point = np.dot(rotation_matrix, point)
-            transformed_point = rotated_point + translation_vector
-            # transformed_points.append(transformed_point)
+            # rotated_point = np.dot(rotation_matrix, point)
+            # transformed_point = rotated_point + translation_vector
+            point = point + translation_vector
+            transformed_point = np.dot(rotation_matrix, point)
             
             # rotate the orientation
             try:
