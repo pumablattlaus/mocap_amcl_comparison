@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import math
 import rospy
 import rosbag
 from geometry_msgs.msg import PoseStamped
@@ -12,11 +13,16 @@ from matplotlib import pyplot as plt
 # plt.rcParams['text.usetex'] = True
 from matplotlib.collections import LineCollection
 
+t_max=np.inf
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
+# t_max=780 # !
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_one.bag'
+# t_max=392
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.052_one.bag'
-bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
-# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_two.bag'
+# t_max=197
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
+bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_two.bag'
+t_max=223
 bag_path_transformation='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
 
 pose_mocap_topic='/qualisys/mur620c/pose'
@@ -46,6 +52,25 @@ def process_message(msg, data, t):
     data['z'].append(pose.position.z)
     rot_z = tf.transformations.euler_from_quaternion([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])[2]
     data['rot_z'].append(rot_z)
+    
+def remove_outliers(data: pd.DataFrame, column: str, f: float = 0.99, data_other: List[pd.DataFrame] = None, filter: str = 'iqr'):
+    
+    if filter == 'quantile':
+        #quantile filter: remove the top f% of the data
+        q = df2_aligned_wo_start[column].quantile(f)
+        idx_inliers = df2_aligned_wo_start[column] < q
+    elif filter == 'iqr':
+        # iqr filter: within 2.22 IQR (equiv. to z-score < 3)
+        iqr = data.quantile(0.75, numeric_only=False) - data.quantile(0.25, numeric_only=False)
+        idx_inliers = np.abs((data - data.median()) / iqr) < 2.22
+    else:
+        raise ValueError('Unknown filter')
+
+    if data_other is None:
+        return data[idx_inliers]
+    else:
+        return data[idx_inliers], [d[idx_inliers] for d in data_other]
+    
 
 def correct_orientation(data: pd.DataFrame):
     # Correct the rotation error to be between -pi and pi
@@ -86,6 +111,23 @@ def create_line_collection(df: pd.DataFrame, cmap='viridis'):
     # Set the colormap based on the timestamp values
     # lc.set_array(df.index.to_series().diff().dropna().values)
     return lc  
+
+def calc_vel_acc(df: pd.DataFrame):
+    # velocities in x:
+    df["t"] = df.index
+    diff_df = df.diff().dropna()
+    df["v_x"]=np.append(diff_df["x"].values/diff_df["t"],np.nan)
+    df["v_y"]=np.append(diff_df["y"].values/diff_df["t"],np.nan)
+    df["v_rot_z"]=np.append(diff_df["rot_z"].values/diff_df["t"],np.nan)
+    df["v"] = np.append(np.linalg.norm(diff_df[["x","y"]].values, axis=1) / diff_df["t"], np.nan)
+
+    # accelerations:
+    df['a'] = df['v'].diff()
+    df['a_x'] = df['v_x'].diff()
+    df['a_y'] = df['v_y'].diff()
+    df['a_rot_z'] = df['v_rot_z'].diff()
+    
+    return df
     
 with rosbag.Bag(bag_path) as bag:
     for topic, msg, t in bag.read_messages(topics=[pose_amcl_topic]):
@@ -104,6 +146,10 @@ data2['timestamp'] = [t - data2['timestamp'][0] for t in data2['timestamp']]
 df1 = pd.DataFrame(data1).set_index('timestamp')
 df2 = pd.DataFrame(data2).set_index('timestamp')
 
+# restrict to t_max
+df1 = df1[df1.index < t_max]
+df2 = df2[df2.index < t_max]
+
 # Resample or align the data
 # Example: Align df2 to df1's timestamps using nearest method
 df2_aligned = df2.reindex(df1.index, method='nearest')
@@ -117,6 +163,10 @@ df1 = tC.apply_transformation(df1)
 # df1=correct_orientation(df1)
 # df2=correct_orientation(df2)
 
+# rot_z: make continuous without jumps of 2pi between two neighbor values
+df1['rot_z'] = np.unwrap(df1['rot_z'])
+df2_aligned['rot_z'] = np.unwrap(df2_aligned['rot_z'])
+
 # Subtract df1 from df2
 error = df2_aligned - df1
 
@@ -126,8 +176,8 @@ df2_corrected = df2_aligned - error.mean()
 df1_wo_start = df1 - df1.iloc[0]
 df2_aligned_wo_start = df2_aligned - df2_aligned.iloc[0]
 
-df1_wo_start=correct_orientation(df1_wo_start)
-df2_aligned_wo_start=correct_orientation(df2_aligned_wo_start)
+# df1_wo_start=correct_orientation(df1_wo_start)
+# df2_aligned_wo_start=correct_orientation(df2_aligned_wo_start)
 
 # velocities in x:
 df2_aligned_wo_start["t"] = df2_aligned_wo_start.index
@@ -142,6 +192,11 @@ df2_aligned_wo_start['a'] = df2_aligned_wo_start['v'].diff()
 df2_aligned_wo_start['a_x'] = df2_aligned_wo_start['v_x'].diff()
 df2_aligned_wo_start['a_y'] = df2_aligned_wo_start['v_y'].diff()
 df2_aligned_wo_start['a_rot_z'] = df2_aligned_wo_start['v_rot_z'].diff()
+
+# Remove outliers in velocity
+# data_other = [df1, df1_wo_start, df2_corrected]
+# df2_aligned_wo_start, data_other=remove_outliers(df2_aligned_wo_start, 'v', 5, data_other)
+# df1, df1_wo_start, df2_corrected = data_other
 
 
 # error_wo_start
@@ -171,16 +226,14 @@ fig.savefig(bag_path+'_xyrot.png')
 fig=plot_data([error_wo_start_corrected], ['corrected error'])
 fig.savefig(bag_path+'_error_corrected.png')
 
-# Also plot x and y in the same figure, with the time as color
-# plt.figure()
-# plt.scatter(df1['x'], df1['y'], c=df1.index)
-# plt.scatter(df2_corrected['x'], df2_corrected['y'], c=df2_corrected.index)
-# plt.colorbar()
-# plt.title('x-y plot')
-# plt.xlabel('x')
-# plt.ylabel('y')
-# # plt.show()
-
+# Plot total error in x,y and error in rot_z
+error_wo_start_corrected['xy'] = np.sqrt(error_wo_start_corrected['x']**2 + error_wo_start_corrected['y']**2)
+fig, axs = plt.subplots(2, 1, sharex=True)
+axs[0].plot(error_wo_start_corrected.index, error_wo_start_corrected['xy'], label=None)
+axs[0].set_ylabel('$e_{trans} [m]$')
+axs[1].plot(error_wo_start_corrected.index, error_wo_start_corrected['rot_z'], label=None)
+axs[1].set_ylabel('$e_{rot} [rad]$')
+fig.savefig(bag_path+'_error_corrected_xy.png')
 
 # Use lines for the xy plot with color based on time
 lc_df1 = create_line_collection(df1, 'winter') #Blues
@@ -199,14 +252,6 @@ plt.colorbar(lc_df2, label='MoCap: Duration [s]')
 
 fig.savefig(bag_path+'.png')
 
-# Plot velocities x and y
-fig, axs = plt.subplots(2, 1, sharex=True)
-axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_x'])
-axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_y'])
-axs[0].set_ylabel('$v_x$ [m/s]')
-axs[1].set_ylabel('$v_y$ [m/s]')
-axs[1].set_xlabel('Time [s]')
-
 # Plot velocities total
 fig, axs = plt.subplots(2, 1, sharex=True)
 axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v'])
@@ -214,6 +259,7 @@ axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_rot_z'])
 axs[0].set_ylabel('v [m/s]')
 axs[1].set_ylabel('$v_\\theta$ [rad/s]')
 axs[1].set_xlabel('Time [s]')
+fig.savefig(bag_path+'_vel.png')
 
 # Plot accelerations
 fig, axs = plt.subplots(2, 1, sharex=True)
@@ -222,13 +268,7 @@ axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_rot_z'])
 axs[0].set_ylabel('a [m/s²]')
 axs[1].set_ylabel('$a_\\theta$ [rad/s²]')
 axs[1].set_xlabel('Time [s]')
-
-fig, axs = plt.subplots(2, 1, sharex=True)
-axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_x'])
-axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_y'])
-axs[0].set_ylabel('$a_x$ [m/s²]')
-axs[1].set_ylabel('$a_y$ [m/s²]')
-axs[1].set_xlabel('Time [s]')
+fig.savefig(bag_path+'_acel.png')
 
 
 plt.show()
