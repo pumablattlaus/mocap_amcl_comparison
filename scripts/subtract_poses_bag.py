@@ -23,6 +23,7 @@ t_max=np.inf
 # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_two.bag'
 bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.026_two.bag'
 t_max=223
+# bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.104_one.bag' #!
 bag_path_transformation='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.013_one.bag'
 
 pose_mocap_topic='/qualisys/mur620c/pose'
@@ -112,20 +113,22 @@ def create_line_collection(df: pd.DataFrame, cmap='viridis'):
     # lc.set_array(df.index.to_series().diff().dropna().values)
     return lc  
 
-def calc_vel_acc(df: pd.DataFrame):
+def calc_vel_acc(df: pd.DataFrame, df_saving: pd.DataFrame = None):
+    if df_saving is None:
+        df_saving = df
     # velocities in x:
     df["t"] = df.index
     diff_df = df.diff().dropna()
-    df["v_x"]=np.append(diff_df["x"].values/diff_df["t"],np.nan)
-    df["v_y"]=np.append(diff_df["y"].values/diff_df["t"],np.nan)
-    df["v_rot_z"]=np.append(diff_df["rot_z"].values/diff_df["t"],np.nan)
-    df["v"] = np.append(np.linalg.norm(diff_df[["x","y"]].values, axis=1) / diff_df["t"], np.nan)
+    df_saving["v_x"]=np.append(diff_df["x"].values/diff_df["t"],np.nan)
+    df_saving["v_y"]=np.append(diff_df["y"].values/diff_df["t"],np.nan)
+    df_saving["v_rot_z"]=np.append(diff_df["rot_z"].values/diff_df["t"],np.nan)
+    df_saving["v"] = np.append(np.linalg.norm(diff_df[["x","y"]].values, axis=1) / diff_df["t"], np.nan)
 
     # accelerations:
-    df['a'] = df['v'].diff()
-    df['a_x'] = df['v_x'].diff()
-    df['a_y'] = df['v_y'].diff()
-    df['a_rot_z'] = df['v_rot_z'].diff()
+    df_saving['a'] = df['v'].diff()
+    df_saving['a_x'] = df['v_x'].diff()
+    df_saving['a_y'] = df['v_y'].diff()
+    df_saving['a_rot_z'] = df['v_rot_z'].diff()
     
     return df
     
@@ -176,22 +179,7 @@ df2_corrected = df2_aligned - error.mean()
 df1_wo_start = df1 - df1.iloc[0]
 df2_aligned_wo_start = df2_aligned - df2_aligned.iloc[0]
 
-# df1_wo_start=correct_orientation(df1_wo_start)
-# df2_aligned_wo_start=correct_orientation(df2_aligned_wo_start)
-
-# velocities in x:
-df2_aligned_wo_start["t"] = df2_aligned_wo_start.index
-diff_df2 = df2_aligned_wo_start.diff().dropna()
-df2_aligned_wo_start["v_x"]=np.append(diff_df2["x"].values/diff_df2["t"],np.nan)
-df2_aligned_wo_start["v_y"]=np.append(diff_df2["y"].values/diff_df2["t"],np.nan)
-df2_aligned_wo_start["v_rot_z"]=np.append(diff_df2["rot_z"].values/diff_df2["t"],np.nan)
-df2_aligned_wo_start["v"] = np.append(np.linalg.norm(diff_df2[["x","y"]].values, axis=1) / diff_df2["t"], np.nan)
-
-# accelerations:
-df2_aligned_wo_start['a'] = df2_aligned_wo_start['v'].diff()
-df2_aligned_wo_start['a_x'] = df2_aligned_wo_start['v_x'].diff()
-df2_aligned_wo_start['a_y'] = df2_aligned_wo_start['v_y'].diff()
-df2_aligned_wo_start['a_rot_z'] = df2_aligned_wo_start['v_rot_z'].diff()
+df2_aligned_wo_start=calc_vel_acc(df2_aligned_wo_start)
 
 # Remove outliers in velocity
 # data_other = [df1, df1_wo_start, df2_corrected]
@@ -271,7 +259,7 @@ axs[1].set_xlabel('Time [s]')
 fig.savefig(bag_path+'_acel.png')
 
 
-plt.show()
+# plt.show()
 
 # Get all meaningful statistics from the error:
 print('Mean')
@@ -306,4 +294,7 @@ error_stats = pd.concat([error_wo_start_corrected.mean(), error_wo_start_correct
 error_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
 error_stats.to_csv(bag_path+'_error_stats.csv')
 
+df2_stats=pd.concat([df2_aligned_wo_start.mean(), df2_aligned_wo_start.median(), df2_aligned_wo_start.std(), df2_aligned_wo_start.min(), df2_aligned_wo_start.max(), df2_aligned_wo_start.pow(2).mean().pow(1/2)], axis=1)
+df2_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
+df2_stats.to_csv(bag_path+'_df2_stats.csv')
 print('Done')
