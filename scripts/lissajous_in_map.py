@@ -118,6 +118,6 @@ ax.autoscale()
 
 plt.show()
 
-fig.savefig(bag_path+'_map.png', bbox_inches='tight')
+fig.savefig(bag_path+'_map.svg', bbox_inches='tight')
 
 print('Done')

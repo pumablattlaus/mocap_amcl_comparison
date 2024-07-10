@@ -6,14 +6,14 @@ import rosbag
 from geometry_msgs.msg import PoseStamped
 import tf
 from typing import List
-import copy
-import bags_paths
+import json
 
 from find_transformation_mocap import TransformationCalc
 
 from matplotlib import pyplot as plt
 # plt.rcParams['text.usetex'] = True
 from matplotlib.collections import LineCollection
+import bags_paths
 
 def align_data(df1: pd.DataFrame, df2: pd.DataFrame):
     '''Align 2 dataframes based on the timestamps of df1. Uses the mean of df2 values in the range of df1 timestamps.'''
@@ -150,7 +150,69 @@ def calc_vel_acc(df: pd.DataFrame, df_saving: pd.DataFrame = None):
     
     return df_saving
 
-def main(tC, bag_path, save_path=None, t_max=np.inf, pose_amcl_topic='/mur620b/robot_pose', pose_mocap_topic='/qualisys/mur620b/pose'):
+def extract_timestamps(file_path):
+    # Open and read the content of the .txt file
+    with open(file_path, 'r') as file:
+        content = file.read()
+    
+    content = content.replace("'", '"') # if single quotes are used in the file
+    # Parse the JSON-like structure to a Python dictionary
+    data = json.loads(content)
+
+    # Determine which array ('x' or 'rot_z') is longer
+    if len(data['x']) >= len(data['rot_z']):
+        # Use timestamps from 'x' if 'x' is longer or equal in length to 'rot_z'
+        timestamps = data['x']
+    else:
+        # Use timestamps from 'rot_z' if 'rot_z' is longer
+        timestamps = data['rot_z']
+
+    # Extract the first and second timestamps
+    t_min = timestamps[0] if len(timestamps) > 0 else 0
+    t_max = timestamps[1] if len(timestamps) > 1 else np.inf
+    # check if cmd is sent before recording of bag starts not possible without bag time
+
+    return t_min, t_max
+
+def get_distance(df:pd.DataFrame):
+    # accumulate the path length
+    path_length = np.sum(np.sqrt(np.diff(df[['x', 'y']], axis=0) ** 2).sum(axis=1))
+    
+    # accumulate the rotation
+    rotation_length = np.sum(np.abs(np.diff(df['rot_z'])))
+        
+    return path_length, rotation_length
+
+def get_distance_bag(bag_path, t_min, t_max, pose_mocap_topic='/qualisys/mur620b/pose'):
+    data = {'timestamp': [], 'x': [], 'y': [], 'z': [], 'rot_z': []}
+    with rosbag.Bag(bag_path) as bag:                
+        for _, msg, t in bag.read_messages(topics=[pose_mocap_topic]):
+            # if isinstance(msg, PoseStamped):
+            process_message(msg, data, t)
+
+    # Subtract the first timestamp from all timestamps
+    # t_min -= data['timestamp'][0]
+    # t_max -= data['timestamp'][0]
+    data['timestamp'] = [t - data['timestamp'][0] for t in data['timestamp']]
+    data['timestamp'] = [t - data['timestamp'][0] for t in data['timestamp']]
+    
+    # # check if cmd is sent before recording of bag starts
+    # if t_min > 3:
+    #     print("cmd_vel is sent before recording of bag starts")
+    #     t_max = t_min
+    #     t_min = 0
+
+    # Convert to DataFrame
+    df = pd.DataFrame(data).set_index('timestamp')
+
+    # restrict to t_max
+    df = df[t_min < df.index]
+    df = df[df.index < t_max]
+    
+    return get_distance(df)
+    
+    
+def main(tC, bag_path, save_path=None, t_min=0, t_max=np.inf, pose_amcl_topic='/mur620b/robot_pose', pose_mocap_topic='/qualisys/mur620b/pose', max_distance=np.inf, rotational=False):
 
     # Initialize data structures
     data1 = {'timestamp': [], 'x': [], 'y': [], 'z': [], 'rot_z': []}
@@ -169,56 +231,74 @@ def main(tC, bag_path, save_path=None, t_max=np.inf, pose_amcl_topic='/mur620b/r
             process_message(msg, data2, t)
 
     # Subtract the first timestamp from all timestamps
+    if t_max > 1e6:
+        # t_max is timestamp, not duration
+        t_min -= data1['timestamp'][0]
+        t_max -= data1['timestamp'][0]
     data1['timestamp'] = [t - data1['timestamp'][0] for t in data1['timestamp']]
     data2['timestamp'] = [t - data2['timestamp'][0] for t in data2['timestamp']]
+    
+    # check if cmd is sent before recording of bag starts
+    if t_min > 3:
+        print("cmd_vel is sent before recording of bag starts")
+        t_max = t_min
+        t_min = 0
 
     # Convert to DataFrame
     df1 = pd.DataFrame(data1).set_index('timestamp')
     df2 = pd.DataFrame(data2).set_index('timestamp')
 
     # restrict to t_max
+    df1 = df1[t_min < df1.index]
     df1 = df1[df1.index < t_max]
+    df2 = df2[t_min < df2.index]
     df2 = df2[df2.index < t_max]
+        
     
-    # remove late data (small dt -> large velocity)
-    dt_min = (df1.iloc[-1].name - df1.iloc[0].name)/len(df1)*0.5
-    # df1['dt'] = df1.index.to_series().diff()
-    # df1 = df1[df1['dt'] > dt_min]
-    # df1.drop(columns=['dt'], inplace=True)
-    for i, t_i in enumerate(df1.index):
-        if i < len(df1.index) - 1:
-            if df1.index[i+1] - t_i < dt_min:
-                # remove the data
-                df1 = df1.drop(t_i)
+    # remove late data (small dt -> large velocity
+    try:
+        dt_min = (df1.iloc[-1].name - df1.iloc[0].name)/len(df1)*0.5
+    except IndexError:
+        dt_min = 0
+
+    # for i, t_i in enumerate(df1.index):
+    #     if i < len(df1.index) - 1:
+    #         if df1.index[i+1] - t_i < dt_min:
+    #             # remove the data
+    #             df1 = df1.drop(t_i)
 
     # Resample or align the data
     # Example: Align df2 to df1's timestamps using nearest method
     # df2_aligned = df2.reindex(df1.index, method='nearest')
     df2_aligned = align_data(df1, df2)
-    
-    
-
-    # Print frequencies:
-    print(f'Frequency AMCL: {1/df1.index.to_series().diff().mode()[0]}')
-    print(f'Frequency MoCap: {1/df2.index.to_series().diff().mode()[0]}')
-    print(f'Frequency aligned: {1/df2_aligned.index.to_series().diff().mode()[0]}')
 
     df1 = tC.apply_transformation(df1)
     # df1=correct_orientation(df1)
     # df2=correct_orientation(df2)
 
+    # unwrap has problems with nan values. Therefore, remove them from df1 and df2_aligned if df2_aligned is nan
+    df1 = df1[~df2_aligned.isna().any(axis=1)]
+    df2_aligned = df2_aligned.dropna()
     # rot_z: make continuous without jumps of 2pi between two neighbor values
     df1['rot_z'] = np.unwrap(df1['rot_z'])
     df2_aligned['rot_z'] = np.unwrap(df2_aligned['rot_z'])
 
-    # Subtract df1 from df2
-    error = df2_aligned - df1
-
-    df2_corrected = df2_aligned - error.mean()
 
     # Subtract starting position
     df1_wo_start = df1 - df1.iloc[0]
     df2_aligned_wo_start = df2_aligned - df2_aligned.iloc[0]
+    
+    # Get legth of the path:
+    df2_aligned_wo_start_diff = df2_aligned_wo_start.diff()
+    df2_aligned_wo_start['length'] = np.sqrt(df2_aligned_wo_start_diff['x']**2 + df2_aligned_wo_start_diff['y']**2).cumsum()
+    
+    # Get all idx < max distance:
+    idxs_max_dist = df2_aligned_wo_start['length'] < max_distance
+    
+    # Subtract df1 from df2
+    error = df2_aligned - df1
+
+    df2_corrected = df2_aligned - error.mean()
 
     df2_aligned=calc_vel_acc(df2_aligned)
     df2_aligned_wo_start=calc_vel_acc(df2_aligned_wo_start)
@@ -233,8 +313,7 @@ def main(tC, bag_path, save_path=None, t_max=np.inf, pose_amcl_topic='/mur620b/r
     error_wo_start = df2_aligned_wo_start - df1_wo_start
 
     # disregard ouliers in rot_z:
-    error_wo_start['rot_z'][abs(error_wo_start['rot_z']) > np.pi/2] = np.nan
-    print(f"{error_wo_start.mean()=}")
+    error_wo_start.loc[abs(error_wo_start['rot_z']) > np.pi/2, 'rot_z'] = np.nan
 
     df2_wo_start_corrected = df2_aligned_wo_start - error_wo_start.mean()
 
@@ -244,143 +323,117 @@ def main(tC, bag_path, save_path=None, t_max=np.inf, pose_amcl_topic='/mur620b/r
     error_wo_start_corrected['rot_z'][abs(error_wo_start_corrected['rot_z']) > np.pi/2] = np.nan
 
     # Plot the result and the original data. One figure for x, one for y, one for rot_z
-    # fig=plot_data([df1, df2_aligned], ['AMCL', 'MoCap'])
     # fig=plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
-    # fig=plot_data([df1, df2_corrected], ['AMCL', 'MoCap'])
-    fig=plot_data([df1_wo_start, df2_aligned_wo_start], ['AMCL', 'MoCap'])
-    fig.savefig(save_path+'_xyrot.png')
+    # fig.savefig(save_path+'_xyrot.png')
     
-    fig=plot_data([error_wo_start], ['error'])
-    fig.savefig(save_path+'_error.png')
+    # fig=plot_data([error_wo_start], ['error'])
+    # fig.savefig(save_path+'_error.png')
 
-    fig=plot_data([error_wo_start_corrected], ['corrected error'])
-    fig.savefig(save_path+'_error_corrected.png')
+    # fig=plot_data([error_wo_start_corrected], ['corrected error'])
+    # fig.savefig(save_path+'_error_corrected.png')
 
-    # Plot total error in x,y and error in rot_z
+    # # Plot total error in x,y and error in rot_z
     error_wo_start_corrected['xy'] = np.sqrt(error_wo_start_corrected['x']**2 + error_wo_start_corrected['y']**2)
-    fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(error_wo_start_corrected.index, error_wo_start_corrected['xy'], label=None)
-    axs[0].set_ylabel('$e_{trans} [m]$')
-    axs[1].plot(error_wo_start_corrected.index, error_wo_start_corrected['rot_z'], label=None)
-    axs[1].set_ylabel('$e_{rot} [rad]$')
-    fig.savefig(save_path+'_error_corrected_xy.png')
+    # fig, axs = plt.subplots(2, 1, sharex=True)
+    # axs[0].plot(error_wo_start_corrected.index, error_wo_start_corrected['xy'], label=None)
+    # axs[0].set_ylabel('$e_{trans} [m]$')
+    # axs[1].plot(error_wo_start_corrected.index, error_wo_start_corrected['rot_z'], label=None)
+    # axs[1].set_ylabel('$e_{rot} [rad]$')
+    # fig.savefig(save_path+'_error_corrected_xy.png')
     
     error_wo_start['xy'] = np.sqrt(error_wo_start['x']**2 + error_wo_start['y']**2)
     fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(error_wo_start.index, error_wo_start['xy'], label=None)
-    axs[0].set_ylabel('$e_{trans} [m]$')
-    axs[1].plot(error_wo_start.index, error_wo_start['rot_z'], label=None)
-    axs[1].set_ylabel('$e_{rot} [rad]$')
-    fig.savefig(save_path+'_error_xy.png')
+    axs[0].plot(df2_aligned_wo_start['length'], error_wo_start['xy'], label=None)
+    axs[0].set_ylabel('$e_{trans}$ [m]')
+    axs[1].plot(df2_aligned_wo_start['length'], error_wo_start['rot_z'], label=None)
+    axs[1].set_ylabel('$e_{rot}$ [rad]')
+    axs[1].set_xlabel('Path length [m]')
+    fig.savefig(save_path+'_error_xy_length.png')
     
     error['xy'] = np.sqrt(error['x']**2 + error['y']**2)
-    fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(error.index, error['xy'], label=None)
-    axs[0].set_ylabel('$e_{trans} [m]$')
-    axs[1].plot(error.index, error['rot_z'], label=None)
-    axs[1].set_ylabel('$e_{rot} [rad]$')
-    fig.savefig(save_path+'_error_xy_unedited.png')
+    # fig, axs = plt.subplots(2, 1, sharex=True)
+    # axs[0].plot(error.index, error['xy'], label=None)
+    # axs[0].set_ylabel('$e_{trans} [m]$')
+    # axs[1].plot(error.index, error['rot_z'], label=None)
+    # axs[1].set_ylabel('$e_{rot} [rad]$')
+    # fig.savefig(save_path+'_error_xy_unedited.png')
 
-    # Use lines for the xy plot with color based on time
-    lc_df1 = create_line_collection(df1, 'winter') #Blues
-    lc_df2 = create_line_collection(df2_corrected, cmap='copper') #Reds
+    # # Use lines for the xy plot with color based on time
+    # lc_df1 = create_line_collection(df1, 'winter') #Blues
+    # lc_df2 = create_line_collection(df2_corrected, cmap='copper') #Reds
 
-    # Create the scatter plot with a line
-    fig, ax = plt.subplots()
-    ax.add_collection(lc_df1)
-    ax.add_collection(lc_df2)
-    ax.autoscale()
-    ax.axes.set_aspect('equal')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    plt.colorbar(lc_df1, label='AMCL: Duration [s]')
-    plt.colorbar(lc_df2, label='MoCap: Duration [s]')
-    # plt.show()
-    fig.savefig(save_path+'.png')
+    # # Create the scatter plot with a line
+    # fig, ax = plt.subplots()
+    # ax.add_collection(lc_df1)
+    # ax.add_collection(lc_df2)
+    # ax.autoscale()
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # plt.colorbar(lc_df1, label='AMCL: Duration [s]')
+    # plt.colorbar(lc_df2, label='MoCap: Duration [s]')
+    # # plt.show()
+    # fig.savefig(save_path+'.png')
     
-    lc_df1_wo_start = create_line_collection(df1_wo_start, 'winter') #Blues
-    lc_df2_wo_start = create_line_collection(df2_aligned_wo_start, cmap='copper') #Reds
-    # Create the scatter plot with a line
-    fig, ax = plt.subplots()
-    ax.add_collection(lc_df1_wo_start)
-    ax.add_collection(lc_df2_wo_start)
-    ax.autoscale()
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    plt.colorbar(lc_df1_wo_start, label='AMCL: Duration [s]')
-    plt.colorbar(lc_df2_wo_start, label='MoCap: Duration [s]')
-    # plt.show()
-    fig.savefig(save_path+'wo_start.png')
+    # lc_df1_wo_start = create_line_collection(df1_wo_start, 'winter') #Blues
+    # lc_df2_wo_start = create_line_collection(df2_aligned_wo_start, cmap='copper') #Reds
+    # # Create the scatter plot with a line
+    # fig, ax = plt.subplots()
+    # ax.add_collection(lc_df1_wo_start)
+    # ax.add_collection(lc_df2_wo_start)
+    # ax.autoscale()
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # plt.colorbar(lc_df1_wo_start, label='AMCL: Duration [s]')
+    # plt.colorbar(lc_df2_wo_start, label='MoCap: Duration [s]')
+    # # plt.show()
+    # fig.savefig(save_path+'wo_start.png')
 
-    # Plot velocities total
-    fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v'])
-    axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_rot_z'])
-    axs[0].set_ylabel('v [m/s]')
-    axs[1].set_ylabel('$v_\\theta$ [rad/s]')
-    axs[1].set_xlabel('Time [s]')
-    fig.savefig(save_path+'_vel.png')
+    # # Plot velocities total
+    # fig, axs = plt.subplots(2, 1, sharex=True)
+    # axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v'])
+    # axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['v_rot_z'])
+    # axs[0].set_ylabel('v [m/s]')
+    # axs[1].set_ylabel('$v_\\theta$ [rad/s]')
+    # axs[1].set_xlabel('Time [s]')
+    # fig.savefig(save_path+'_vel.png')
     
-    fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(df2_aligned.index, df2_aligned['v'])
-    axs[1].plot(df2_aligned.index, df2_aligned['v_rot_z'])
-    axs[0].set_ylabel('v [m/s]')
-    axs[1].set_ylabel('$v_\\theta$ [rad/s]')
-    axs[1].set_xlabel('Time [s]')
-    fig.savefig(save_path+'_vel_with_start.png')
+    # fig, axs = plt.subplots(2, 1, sharex=True)
+    # axs[0].plot(df2_aligned.index, df2_aligned['v'])
+    # axs[1].plot(df2_aligned.index, df2_aligned['v_rot_z'])
+    # axs[0].set_ylabel('v [m/s]')
+    # axs[1].set_ylabel('$v_\\theta$ [rad/s]')
+    # axs[1].set_xlabel('Time [s]')
+    # fig.savefig(save_path+'_vel_with_start.png')
 
-    # Plot accelerations
-    fig, axs = plt.subplots(2, 1, sharex=True)
-    axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a'])
-    axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_rot_z'])
-    axs[0].set_ylabel('a [m/s²]')
-    axs[1].set_ylabel('$a_\\theta$ [rad/s²]')
-    axs[1].set_xlabel('Time [s]')
-    fig.savefig(save_path+'_acel.png')
+    # # Plot accelerations
+    # fig, axs = plt.subplots(2, 1, sharex=True)
+    # axs[0].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a'])
+    # axs[1].plot(df2_aligned_wo_start.index, df2_aligned_wo_start['a_rot_z'])
+    # axs[0].set_ylabel('a [m/s²]')
+    # axs[1].set_ylabel('$a_\\theta$ [rad/s²]')
+    # axs[1].set_xlabel('Time [s]')
+    # fig.savefig(save_path+'_acel.png')
 
 
     # plt.show()
 
     # Get all meaningful statistics from the error:
-    print('Mean')
-    print(error.mean())
-    print('Median')
-    print(error.median())
-    print('Standard deviation')
-    print(error.std())
-    print('Min')
-    print(error.min())
-    print('Max')
-    print(error.max())
-    print('RMS')
-    print(error.pow(2).mean().pow(1/2))
-
-    print('Corrected error')
-    print('Mean')
-    print(error_wo_start_corrected.mean())
-    print('Median')
-    print(error_wo_start_corrected.median())
-    print('Standard deviation')
-    print(error_wo_start_corrected.std())
-    print('Min')
-    print(error_wo_start_corrected.min())
-    print('Max')
-    print(error_wo_start_corrected.max())
-    print('RMS')
-    print(error_wo_start_corrected.pow(2).mean().pow(1/2))
 
     # output the statistics to a file:
-    error_stats = pd.concat([error_wo_start_corrected.mean(), error_wo_start_corrected.median(), error_wo_start_corrected.std(), error_wo_start_corrected.min(), error_wo_start_corrected.max(), error_wo_start_corrected.pow(2).mean().pow(1/2)], axis=1)
+    error_corrected_max_d = error_wo_start_corrected[idxs_max_dist]
+    error_stats = pd.concat([error_corrected_max_d.mean(), error_corrected_max_d.median(), error_corrected_max_d.std(), error_corrected_max_d.min(), error_corrected_max_d.max(), error_corrected_max_d.pow(2).mean().pow(1/2)], axis=1)
     error_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
-    error_stats.to_csv(save_path+'_error_stats_corrected.csv')
+    error_stats.to_csv(save_path+'_first_interval_error_stats_corrected_max_dist.csv')
     
-    error_uncorrected_stats = pd.concat([error_wo_start.mean(), error_wo_start.median(), error_wo_start.std(), error_wo_start.min(), error_wo_start.max(), error_wo_start.pow(2).mean().pow(1/2)], axis=1)
+    error_wo_start_max_d = error_wo_start[idxs_max_dist]
+    error_uncorrected_stats = pd.concat([error_wo_start_max_d.mean(), error_wo_start_max_d.median(), error_wo_start_max_d.std(), error_wo_start_max_d.min(), error_wo_start_max_d.max(), error_wo_start_max_d.pow(2).mean().pow(1/2)], axis=1)
     error_uncorrected_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
-    error_uncorrected_stats.to_csv(save_path+'_error_stats.csv')
+    error_uncorrected_stats.to_csv(save_path+'_first_interval_error_stats_max_dist.csv')
 
-    df2_stats=pd.concat([df2_aligned_wo_start.mean(), df2_aligned_wo_start.median(), df2_aligned_wo_start.std(), df2_aligned_wo_start.min(), df2_aligned_wo_start.max(), df2_aligned_wo_start.pow(2).mean().pow(1/2)], axis=1)
+    df2_aligned_wo_start_max_d = df2_aligned_wo_start[idxs_max_dist]
+    df2_stats=pd.concat([df2_aligned_wo_start_max_d.mean(), df2_aligned_wo_start_max_d.median(), df2_aligned_wo_start_max_d.std(), df2_aligned_wo_start_max_d.min(), df2_aligned_wo_start_max_d.max(), df2_aligned_wo_start_max_d.pow(2).mean().pow(1/2)], axis=1)
     df2_stats.columns = ['Mean', 'Median', 'Standard deviation', 'Min', 'Max', 'RMS']
-    df2_stats.to_csv(save_path+'_df2_stats.csv')
+    df2_stats.to_csv(save_path+'_first_interval_df2_stats_max_dist.csv')
     print('Done')
 
 
@@ -402,18 +455,46 @@ if __name__ == '__main__':
     # t_max=223
     # bag_path='/home/rosmatch/hee/amcl_comparison_ws/src/mocap_amcl_comparison/bags/mocap_240208/lissajous_0.104_one.bag' #!
 
-    ## acceleration experiments: rotation
-    # max rot speed set to 0.5:
-    bag_paths, save_paths = bags_paths.get_acceleration_paths()
+    bag_paths, save_paths, t_maxs = bags_paths.get_lissajous_paths()
+    # bag_paths, save_paths = bags_paths.get_linear_paths()
+    # bag_paths, save_paths = bags_paths.get_mix_paths()
 
-    pose_mocap_topic='/qualisys/mur620b/pose'
+    pose_mocap_topic='/qualisys/mur620c/pose'
     # pose_amcl_topic='/mur620c/mir_pose_stamped_simple'
-    pose_amcl_topic='/mur620b/robot_pose'
+    pose_amcl_topic='/mur620c/robot_pose'
 
     # Get fixed transformation from mocap to amcl
     tC = TransformationCalc(bag_path_transformation, '/qualisys/mur620c/pose', '/mur620c/robot_pose')
     tC.calculate_transformation()
 
-    for bag_path, save_path in zip(bag_paths, save_paths):
-        main(tC, bag_path, save_path, t_max, pose_amcl_topic, pose_mocap_topic)
+    # accel_idxs = slice(0, 7)
+    # rotational = False
+    accel_idxs = slice(None)
+
+    # Rename save_paths to save_paths_min_dist
+    for i, (bag_path, save_path) in enumerate(zip(bag_paths, save_paths)):
+        name = save_path.split('/')[-1]
+        path=save_path.split(name)[0]+'min_dist_all/'
+        save_paths[i] = path+name
     
+    t_maxs = np.array(t_maxs)
+    t_mins = np.zeros_like(t_maxs)
+
+    min_distance = np.inf
+    for i, bag_path in enumerate(bag_paths):
+        distance, rad_rotations = get_distance_bag(bag_path, t_mins[i], t_maxs[i], pose_mocap_topic)
+        print(f"distance {i}: {distance}")
+        if distance == 0:
+            print(f"Warning: distance is 0 for bag {bag_path}")
+            continue
+        
+        if distance < min_distance:
+            min_distance = distance
+            print(f"min distance: {min_distance}")
+    
+    t_mins_all = [0 for _ in bag_paths]
+    t_maxs_all = [np.inf for _ in bag_paths]
+    t_mins_all[accel_idxs] = t_mins
+    t_maxs_all[accel_idxs] = t_maxs
+    for bag_path, save_path, t_min, t_max in zip(bag_paths, save_paths, t_mins_all, t_maxs_all):
+        main(tC, bag_path, save_path, t_min, t_max, pose_amcl_topic, pose_mocap_topic, min_distance)
