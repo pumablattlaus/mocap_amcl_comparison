@@ -5,13 +5,13 @@
 
 <h3 align="center">AMCL Accuracy</h3>
 
-<!-- <div align="center">
+<div align="center">
 
-[![Status](https://img.shields.io/badge/status-active-success.svg)]()
-[![GitHub Issues](https://img.shields.io/github/issues/kylelobo/The-Documentation-Compendium.svg)](https://github.com/kylelobo/The-Documentation-Compendium/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/kylelobo/The-Documentation-Compendium.svg)](https://github.com/kylelobo/The-Documentation-Compendium/pulls)
+[![Status](https://img.shields.io/badge/Status-Inactive-lightgrey.svg)]()
+[![GitHub Issues](https://img.shields.io/github/issues/pumablattlaus/mocap_amcl_comparison.svg)](https://github.com/pumablattlaus/mocap_amcl_comparison/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/pumablattlaus/mocap_amcl_comparison.svg)](https://github.com/pumablattlaus/mocap_amcl_comparison/pulls)
 
-</div> -->
+</div>
 
 ---
 
@@ -21,7 +21,7 @@
 
 ## 📝 Table of Contents
 - [Usage](#usage)
-- ...
+- [LICENSE](#license)
 - [TODO](../TODO.md)
 
 ## 🎈 Usage <a name="usage"></a>
@@ -73,3 +73,7 @@ Therefore compare robot_pose to qualisys_map. But robot_pose is without timestam
 rosbag record /qualisys_map/mur620a/pose /qualisys/mur620a/pose /qualisys/mur620a/velocity /qualisys/mur620a/odom /mur620a/amcl_pose /mur620a/mir_pose_stamped_simple /mur620a/robot_pose /mur620a/cmd_vel
 ```
 
+
+## License <a name="license"></a>
+
+See the [LICENSE](LICENSE.md) file for license rights and limitations (MIT).
