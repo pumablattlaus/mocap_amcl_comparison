@@ -24,6 +24,11 @@
 - [LICENSE](#license)
 - [TODO](../TODO.md)
 
+## Prerequisites <a name="prerequisites"></a>
+- ROS noetic
+- [package for lissajous figure](https://github.com/matchRos/diss_Evaluation.git)
+- [match_mobile_robotics](https://github.com/match-ROS/match_mobile_robotics/tree/noetic-devel)
+
 ## 🎈 Usage <a name="usage"></a>
 
 ### Use new map
